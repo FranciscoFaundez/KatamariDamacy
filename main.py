@@ -167,6 +167,10 @@ if __name__ == "__main__":
     # Elije entre 6 y 10 elemento spara poner en pantalla
     num_objects = random.randint(6, 10)
 
+    # Guardamos aquí los objetos que no han sido tocados y los que ya lo fueron
+    absorvibles = []  
+    absorbidos = set()
+
     # Ubica los distintos objetos en el piso
     for i in range(num_objects):
         obj = random.choice(models)
@@ -175,6 +179,7 @@ if __name__ == "__main__":
         y_offset = 0.05 if obj["name"] == "rock" else 0.4  # ajusta altura según objeto
 
         name = f"{obj['name']}_rand_{i}"
+        absorvibles.append(name)
         world.add_node(name,
                     attach_to="scene",
                     mesh=obj["mesh"],
@@ -227,6 +232,13 @@ if __name__ == "__main__":
     pressed_keys = set()
     sphere_direction = np.array([0.0, 0.0])
     rotation_accum = 0  # acumulador de ángulo de rotación
+     
+    # Distancias desde el centro de la esfera a la que se deben pegar los objetos
+    distance_by_type = {
+    "tree": 0.8,
+    "building": 0.8,
+    "rock": 0.65
+    }
 
 
 
@@ -327,6 +339,42 @@ if __name__ == "__main__":
                     # Para convertir un eje arbitrario en rotación XYZ (aprox)
                     # usamos solo rotación en X por simplicidad (como rueda)
                     world["sphere"]["rotation"] = [rotation_accum, 0, 0]
+
+        # Detección de colisiones y absorción
+        esfera_pos = np.array(world["sphere"]["position"])
+        radio_esfera = 0.4 * 0.5  # mismo valor que usamos antes
+
+        for name in absorvibles:
+            if name in absorbidos:
+                continue
+
+            obj_pos = np.array(world[name]["position"])
+            dist = np.linalg.norm(obj_pos - esfera_pos)
+
+            if dist < radio_esfera + 0.3:  # umbral de colisión (ajustable)
+                # Marcar como absorbido
+                absorbidos.add(name)
+
+                # Calcular vector desde centro esfera a objeto
+                direccion_local = obj_pos - esfera_pos
+                norma = np.linalg.norm(direccion_local)
+                if norma < 1e-5:
+                    direccion_local = np.array([1.0, 0.0, 0.0])  # dirección por defecto
+                else:
+                    direccion_local = direccion_local / norma
+
+                # detectar tipo por nombre
+                tipo = "rock"  # por defecto
+                for clave in distance_by_type:
+                    if clave in name:
+                        tipo = clave
+                        break
+
+                r_contact = distance_by_type[tipo]
+                world[name]["position"] = (direccion_local * r_contact).tolist()
+
+                # pegar a la esfera
+                world.graph.add_edge("sphere", name)
 
 
         axis.update()
