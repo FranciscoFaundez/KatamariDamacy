@@ -44,6 +44,7 @@ class MyCam(FreeCamera):
         self.position += dir*self.speed*dt
         self.focus = self.position + self.forward
 
+# Clase para la cámara en primera persona
 class FirstPersonCamera(FreeCamera):
     def __init__(self, target_node, camera_type="perspective"):
         self.target_node = target_node
@@ -60,7 +61,7 @@ class FirstPersonCamera(FreeCamera):
         self.focus = self.position + self.forward
 
 
-
+# Clase para la cámara en tercera persona
 class ThirdPersonCamera(FreeCamera):
     def __init__(self, target_node, offset=[0, 1.2, 3.5], camera_type="perspective"):
         self.target_node = target_node
@@ -123,7 +124,7 @@ if __name__ == "__main__":
     # Objeto 2 (Árbol)
     tree = mesh_from_file(root + "/assets/Tree_1_A_Color1.obj")
 
-    # Edificio
+    # Objeto 3 (Edificio)
     building = mesh_from_file(root + "/assets/building/TallBuilding01.obj")
     building_text = Texture(root + "/assets/building/TallBuilding01.png")
 
@@ -140,8 +141,9 @@ if __name__ == "__main__":
 
   
     # Planicie
-    tile_size = 1.5
+    tile_size = 1
     grid_size = 10  # 10x10
+
     for i in range(-grid_size // 2, grid_size // 2):
         for j in range(-grid_size // 2, grid_size // 2):
             tile_name = f"grass_{i}_{j}"
@@ -157,18 +159,32 @@ if __name__ == "__main__":
                    position=[0, 0.22, 0],
                    scale=[0.4, 0.4, 0.4],
                    material = Material(ambient=[0.3, 0.3, 0.3], diffuse=[0.3, 0.3, 0.3], specular=[0.3, 0.3, 0.3], shininess=10))
+    
 
+    # crear el foco de luz (apagado al principio)
+    world.add_node("sphere_flash",
+        attach_to="sphere",
+        pipeline=cl_pipeline,
+        light=PointLight(
+            diffuse=[1.0, 1.0, 1.0],
+            specular=[1.0, 1.0, 1.0],
+            ambient=[0.0, 0.0, 0.0]
+        ),
+        position=[0, 0, 0])
+
+
+    # modelos de los objetos que aparecerán en el piso
     models = [
         {"name": "rock", "mesh": rock[0]["mesh"], "texture": rock[0]["texture"], "scale": [0.1, 0.1, 0.1]},
         {"name": "tree", "mesh": tree[0]["mesh"], "texture": tree[0]["texture"], "scale": [0.5, 0.5, 0.5]},
         {"name": "building", "mesh": building[0]["mesh"], "texture": building_text, "scale": [0.5, 0.5, 0.5]},
     ]
 
-    # Elije entre 6 y 10 elemento spara poner en pantalla
+    # Elije entre 6 y 10 elementos para poner en pantalla
     num_objects = random.randint(6, 10)
 
     # Guardamos aquí los objetos que no han sido tocados y los que ya lo fueron
-    absorvibles = []  
+    absorbibles = []  
     absorbidos = set()
 
     # Ubica los distintos objetos en el piso
@@ -179,7 +195,7 @@ if __name__ == "__main__":
         y_offset = 0.05 if obj["name"] == "rock" else 0.4  # ajusta altura según objeto
 
         name = f"{obj['name']}_rand_{i}"
-        absorvibles.append(name)
+        absorbibles.append(name)
         world.add_node(name,
                     attach_to="scene",
                     mesh=obj["mesh"],
@@ -203,9 +219,9 @@ if __name__ == "__main__":
                    light = DirectionalLight(diffuse = [0.9, 0.9, 0.1], specular = [0.9, 0.9, 0.1], ambient = [0.9, 0.9, 0.1]),
                    rotation=[-45, 45, 0]
                    )
-
-    cam_orbit = OrbitCamera(6.775)
-    cam_orbit.theta = 0.0001  # vista perfectamente desde arriba
+    
+    cam_orbit = OrbitCamera(4.499)  # o 1.0 si quieres más margen
+    cam_orbit.theta = 0.0001  # vista desde arriba
     cam_orbit.update()
 
 
@@ -217,14 +233,13 @@ if __name__ == "__main__":
 
     @controller.event
     def on_draw():
-        glClearColor(0.1, 0.1, 0.1, 1.0)
+        glClearColor(0.4, 0.7, 1.0, 1.0)
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_CULL_FACE)
         glCullFace(GL_BACK)
         glFrontFace(GL_CCW)
         controller.clear()
         glClearColor(1,1,1,1)
-        #axis.draw()
         world.draw()
 
 
@@ -232,6 +247,8 @@ if __name__ == "__main__":
     pressed_keys = set()
     sphere_direction = np.array([0.0, 0.0])
     rotation_accum = 0  # acumulador de ángulo de rotación
+    flash_timer = 0 # Tiempo que dura la iluminación de la esfera
+
      
     # Distancias desde el centro de la esfera a la que se deben pegar los objetos
     distance_by_type = {
@@ -280,8 +297,17 @@ if __name__ == "__main__":
 
 
     def update(dt):
-        global axis, sphere_direction
+        global axis, sphere_direction, flash_timer
         world.camera = active_camera
+
+        # Ocultar objetos pegados a la esfera en primera persona, para que no molesten a la vista
+        if isinstance(active_camera, FirstPersonCamera):
+            for name in absorbidos:
+                world[name]["pipeline"] = None  # no se dibuja
+        else:
+            for name in absorbidos:
+                world[name]["pipeline"] = cl_pipeline if world[name].get("mesh") and not world[name].get("texture") else tl_pipeline
+
 
         if isinstance(active_camera, FreeCamera):
             active_camera.update()
@@ -331,20 +357,18 @@ if __name__ == "__main__":
                 global rotation_accum
                 rotation_accum += angle_delta
 
-                # calcular eje de rotación (horizontal) usando producto cruzado
+                # calcular eje de rotación (horizontal)
                 rotation_axis = np.cross(move_dir, [0, 1, 0])
                 if np.linalg.norm(rotation_axis) > 0:
                     rotation_axis = rotation_axis / np.linalg.norm(rotation_axis)
 
-                    # Para convertir un eje arbitrario en rotación XYZ (aprox)
-                    # usamos solo rotación en X por simplicidad (como rueda)
                     world["sphere"]["rotation"] = [rotation_accum, 0, 0]
 
         # Detección de colisiones y absorción
         esfera_pos = np.array(world["sphere"]["position"])
-        radio_esfera = 0.4 * 0.5  # mismo valor que usamos antes
+        radio_esfera = 0.4 * 0.5 
 
-        for name in absorvibles:
+        for name in absorbibles:
             if name in absorbidos:
                 continue
 
@@ -376,6 +400,21 @@ if __name__ == "__main__":
                 # pegar a la esfera
                 world.graph.add_edge("sphere", name)
 
+                flash_timer = 0.3  # duración del destello en segundos
+
+                # encender el brillo
+                world["sphere_flash"]["light"].ambient = [1.0, 1.0, 1.0]
+                world["sphere_flash"]["light"].diffuse = [1.0, 1.0, 1.0]
+                world["sphere_flash"]["light"].specular = [1.0, 1.0, 1.0]
+
+        if flash_timer > 0:
+            flash_timer -= dt
+
+            intensidad = max(flash_timer / 0.3, 0.0)  # escala lineal entre 1 y 0
+
+            world["sphere_flash"]["light"].ambient = [intensidad] * 3
+            world["sphere_flash"]["light"].diffuse = [intensidad] * 3
+            world["sphere_flash"]["light"].specular = [intensidad] * 3
 
         axis.update()
         cam.time_update(dt)
